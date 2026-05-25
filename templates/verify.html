@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Face Verification</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <script defer src="{{ url_for('static', filename='js/script.js') }}"></script>
+</head>
+<body data-logged-in="{{ 'true' if voter else 'false' }}" data-biometrics="{{ 'true' if voter and voter['face_data'] else 'false' }}" data-face-recognition="{{ 'true' if face_module_available else 'false' }}">
+  <header>
+    <h1>
+      <img class="header-flag" src="{{ url_for('static', filename='images/crm.jpg') }}" alt="Cameroon flag">
+      Face Verification
+      <img class="header-flag" src="{{ url_for('static', filename='images/crm.jpg') }}" alt="Cameroon flag">
+    </h1>
+  </header>
+
+  <div class="page-container">
+    <section class="panel">
+      <h2>Step 1: Upload Your Voting Card</h2>
+      <p>You must upload the front of your voting card before your face can be verified.</p>
+      <div class="preview-grid">
+        <img id="previewFront" class="preview" src="" alt="Front preview" />
+        <img id="previewBack" class="preview" src="" alt="Back preview" />
+      </div>
+      <div class="card-tools">
+        <button type="button" class="btn upload" id="btnUploadFront">Upload Voting Card Front</button>
+        <button type="button" class="btn upload" id="btnUploadBack">Upload Voting Card Back</button>
+        <input type="file" id="cardFront" accept="image/*" class="hidden">
+        <input type="file" id="cardBack" accept="image/*" class="hidden">
+      </div>
+      {% if not face_module_available %}
+        <div class="notice warning" style="margin-top:16px;">Face recognition module is not installed. Install requirements and restart the app to enable verification.</div>
+      {% endif %}
+    </section>
+
+    <section class="panel">
+      <h2>Step 2: Scan Your Face</h2>
+      <p>Use your camera to capture a live face image and verify it against the uploaded voting card.</p>
+      <div class="camera-preview">
+        <video id="camera" class="hidden" autoplay muted playsinline></video>
+        <div class="circle-overlay hidden" id="faceOverlay"></div>
+        <div id="scanStatus" class="scan-status hidden">Ready to scan</div>
+      </div>
+      <div id="faceGuide" class="face-guide hidden">
+        Move your face inside the circle. Move your head slowly until it is centered.
+      </div>
+      <div class="action-row">
+        <button type="button" class="btn capture" id="startCamera">Open Camera</button>
+        <button type="button" class="btn biometric" id="captureFace">Verify Face</button>
+      </div>
+      <canvas id="canvas" class="hidden"></canvas>
+    </section>
+
+    <section class="panel">
+      <p>If your face matches the voting card photo, you will be taken to the casting page automatically.</p>
+      <p class="notice warning">If you do not see your camera, check browser permissions or refresh the page.</p>
+      <a class="btn secondary" href="{{ url_for('index') }}">Back to Login</a>
+    </section>
+  </div>
+</body>
+</html>

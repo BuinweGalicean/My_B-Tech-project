@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Secure Voting System</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script defer src="{{ url_for('static', filename='js/script.js') }}"></script>
+</head>
+<body data-logged-in="{{ 'true' if voter else 'false' }}" data-biometrics="{{ 'true' if voter and voter['face_data'] else 'false' }}" data-face-recognition="{{ 'true' if face_module_available else 'false' }}">
+  <header>
+    <h1>
+      <img class="header-flag" src="{{ url_for('static', filename='images/crm.jpg') }}" alt="Cameroon flag">
+      Secure Voting System
+      <img class="header-flag" src="{{ url_for('static', filename='images/crm.jpg') }}" alt="Cameroon flag">
+    </h1>
+  </header>
+
+  <div class="page-container">
+    <section class="hero-card panel">
+      <div class="flag-ribbon">
+        <img src="{{ url_for('static', filename='images/crm.jpg') }}" alt="flag"/>
+        <img src="{{ url_for('static', filename='images/crm.jpg') }}" alt="flag"/>
+        <img src="{{ url_for('static', filename='images/crm.jpg') }}" alt="flag"/>
+      </div>
+      <div class="hero-inner">
+        <div class="login-left-col">
+          <h2 class="section-title">Voter Login</h2>
+          {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+              <ul class="flashes">
+                {% for category, message in messages %}
+                  <li class="flash {{ category }}">{{ message }}</li>
+                {% endfor %}
+              </ul>
+            {% endif %}
+          {% endwith %}
+
+          <form id="loginForm" method="POST" enctype="multipart/form-data">
+            <label>Name:</label>
+            <input type="text" name="name" placeholder="Full Name" required value="{{ voter.name if voter }}">
+            <label>ID Number:</label>
+            <input type="text" name="id_number" placeholder="ID Number" required value="{{ voter.id_number if voter }}">
+            <label>Phone:</label>
+            <input type="tel" name="phone" placeholder="Telephone" required value="{{ voter.phone if voter }}">
+            <label>Email:</label>
+            <input type="email" name="email" placeholder="Email" required value="{{ voter.email if voter }}">
+
+            <div class="action-row">
+              <button type="button" class="btn upload" id="btnUpload">Upload Voting Card (Front & Back)</button>
+              <button type="button" class="btn capture" id="startCamera">Capture Photo</button>
+            </div>
+
+            <div class="biometric-row">
+              <button type="button" class="btn biometric" id="captureFace">Facial Recognition</button>
+            </div>
+
+            <div class="biometric-instruction">
+              <p>Biometric verification confirms that your captured face matches the person on the provided ID.</p>
+              {% if voter and voter['face_data'] %}
+                <p class="success">Facial verification completed.</p>
+              {% elif not face_module_available %}
+                <p class="warning">Face recognition module is not installed. Install dependencies and restart the app.</p>
+              {% else %}
+                <p class="warning">Please complete face verification before voting.</p>
+              {% endif %}
+            </div>
+
+            <button type="submit" class="btn primary login-btn">Login</button>
+          </form>
+        </div>
+
+        <div class="login-right-col">
+          <div class="card-preview">
+            <div class="preview-grid">
+              <img id="previewFront" class="preview" src="" alt="Front preview" />
+              <img id="previewBack" class="preview" src="" alt="Back preview" />
+            </div>
+            <div class="camera-preview">
+              <video id="camera" class="hidden" autoplay muted playsinline></video>
+              <div class="circle-overlay hidden" id="faceOverlay"></div>
+              <div id="scanStatus" class="scan-status hidden">Ready to scan</div>
+            </div>
+            <div id="faceGuide" class="face-guide hidden">
+              Move your face inside the circle. Move your head up or down slowly until your face is centered.
+            </div>
+            <canvas id="canvas" class="hidden"></canvas>
+            <div class="card-tools">
+              <input type="file" id="cardFront" accept="image/*">
+              <input type="file" id="cardBack" accept="image/*">
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel vote-row">
+      <div class="vote-row-inner">
+        <div class="vote-box">
+          <h3>Cast Your Vote</h3>
+          {% if not voter %}
+            <p class="notice warning">Please login first. You can see candidates, but you cannot vote until you authenticate.</p>
+          {% elif not voter['face_data'] %}
+            <p class="notice warning">Face recognition must be completed before voting is enabled. Please capture your face now.</p>
+          {% else %}
+            <p class="notice">You are logged in and verified. Select a candidate to vote.</p>
+          {% endif %}
+          <div class="candidate-grid">
+            {% for candidate in candidates %}
+              <div class="candidate-tile">
+                <div class="tile-top" style="background: {{ candidate.party_color }}"></div>
+                <div class="tile-body">
+                  <img src="{{ url_for('static', filename='images/' + (candidate.image or 'crm.jpg')) }}" alt="{{ candidate.name }}"/>
+                  <div class="tile-meta">
+                    <strong>{{ candidate.name }}</strong>
+                    <div class="party">{{ candidate.party }}</div>
+                    <form method="POST" action="{{ url_for('vote') if voter else '#' }}">
+                      <input type="hidden" name="candidate_id" value="{{ candidate.id }}">
+                      <button type="submit" class="btn vote-btn" {% if not voter or not voter['face_data'] %}disabled{% endif %}>
+                        Vote
+                      </button>
+                    </form>
+                  </div>
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+        </div>
+
+        <div class="chart-box">
+          <h3>Live Vote Count</h3>
+          <canvas id="voteChart"></canvas>
+          <button id="refreshChart" class="btn secondary">Refresh Chart</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel results-panel">
+      <div class="results-header">
+        <h2>Election Results</h2>
+      </div>
+      {% if winner %}
+        <div class="winner-banner">
+          <div class="winner-inner">
+            <div class="winner-text">Winner!</div>
+            <div class="winner-name">{{ winner.name }}</div>
+          </div>
+        </div>
+      {% endif %}
+
+      <table id="resultsTable">
+        <thead><tr><th>Candidate</th><th>Party</th><th>Votes</th></tr></thead>
+        <tbody>
+          {% for row in results %}
+            <tr><td>{{ row.name }}</td><td>{{ row.party }}</td><td>{{ row.total_votes }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+  </div>
+</body>
+</html>

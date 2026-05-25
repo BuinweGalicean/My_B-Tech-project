@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Election Results</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <h2>Election Results</h2>
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <ul class="flashes">
+        {% for category, message in messages %}
+          <li class="flash {{ category }}">{{ message }}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  {% endwith %}
+  {% if winner %}
+    <div class="winner-banner">
+      🏆 Winner! {{ winner.name }} ({{ winner.party }}) 🏆
+    </div>
+  {% endif %}
+  <p>Total votes cast: {{ total_votes }}</p>
+  <table>
+    <tr><th>Candidate</th><th>Party</th><th>Votes</th></tr>
+    {% for row in results %}
+      <tr><td>{{ row.name }}</td><td>{{ row.party }}</td><td>{{ row.total_votes }}</td></tr>
+    {% endfor %}
+  </table>
+</body>
+</html>
