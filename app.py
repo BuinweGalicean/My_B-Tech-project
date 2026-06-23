@@ -9,9 +9,14 @@ from werkzeug.utils import secure_filename
 import logging
 
 try:
-    import face_recognition
+    import cv2
 except ModuleNotFoundError:
-    face_recognition = None
+    cv2 = None
+
+try:
+    import numpy as np
+except ModuleNotFoundError:
+    np = None
 
 app = Flask(__name__)
 app.secret_key = "secure_voting_system_key_2024"
@@ -29,14 +34,14 @@ logger = logging.getLogger(__name__)
 
 
 def is_face_recognition_available():
-    return face_recognition is not None
+    return cv2 is not None and np is not None
 
 DB_NAME = 'voting_system'
 
 SAMPLE_CANDIDATES = [
-    {"name": "Chiroma", "party": "Party Blue", "party_color": "#004085", "image": "chiroma.jpg"},
-    {"name": "Kamto", "party": "Party Red", "party_color": "#dc3545", "image": "Kamto.jpg"},
-    {"name": "Papi P", "party": "Party Green", "party_color": "#28a745", "image": "papiP.jpg"}
+    {"name": "Chiroma", "party": "FSNC PARTY", "party_color": "#004085", "image": "chiroma.jpg"},
+    {"name": "Kamto", "party": "MRC PARTY", "party_color": "#dc3545", "image": "Kamto.jpg"},
+    {"name": "Papi P", "party": "CPDM PARTY", "party_color": "#28a745", "image": "papiP.jpg"}
 ]
 
 # Database connection
@@ -195,9 +200,9 @@ def seed_candidates():
         cursor.execute("SELECT COUNT(*) AS total FROM candidates")
         row = cursor.fetchone()
         sample_candidates = [
-            ("Chiroma", "Party Blue", "#004085", "chiroma.jpg"),
-            ("Kamto", "Party Red", "#dc3545", "Kamto.jpg"),
-            ("Papi P", "Party Green", "#28a745", "papiP.jpg")
+            ("Chiroma", "FSNC PARTY", "#004085", "chiroma.jpg"),
+            ("Kamto", "MRC PARTY", "#dc3545", "Kamto.jpg"),
+            ("Papi P", "CPDM PARTY", "#28a745", "papiP.jpg")
         ]
         if row and row['total'] == 0:
             cursor.executemany(
@@ -206,15 +211,21 @@ def seed_candidates():
             )
             conn.commit()
         else:
-            cursor.execute("SELECT id, name, image FROM candidates")
+            cursor.execute("SELECT id, name, party, party_color, image FROM candidates")
             existing = {item['name']: item for item in cursor.fetchall()}
             for name, party, color, image in sample_candidates:
                 if name in existing:
-                    existing_image = existing[name]['image']
-                    if not existing_image or isinstance(existing_image, (bytes, bytearray)):
+                    existing_candidate = existing[name]
+                    update_needed = (
+                        existing_candidate.get('party') != party or
+                        existing_candidate.get('party_color') != color or
+                        not existing_candidate.get('image') or
+                        isinstance(existing_candidate.get('image'), (bytes, bytearray))
+                    )
+                    if update_needed:
                         cursor.execute(
                             "UPDATE candidates SET party=%s, party_color=%s, image=%s WHERE id=%s",
-                            (party, color, image, existing[name]['id'])
+                            (party, color, image, existing_candidate['id'])
                         )
                 else:
                     cursor.execute(
@@ -265,8 +276,15 @@ def get_current_voter():
 
 
 def has_biometric_verification(voter):
-    return bool(voter and voter.get('face_data'))
+    # Consider either face or fingerprint data as valid biometric verification
+    return bool(voter and (voter.get('face_data') or voter.get('fingerprint_data')))
 
+def has_uploaded_voting_card(voter):
+    return bool(voter and voter.get('voting_card_front') and voter.get('voting_card_back'))
+
+def has_identity_verification(voter):
+    # Require both a captured biometric (face or fingerprint) and uploaded ID front+back
+    return has_biometric_verification(voter) and has_uploaded_voting_card(voter)
 
 def fetch_candidates(retry=True):
     conn = get_db_connection()
@@ -299,7 +317,7 @@ def fetch_results():
     cursor = conn.cursor(dictionary=True)
     try:
         cursor.execute("""
-            SELECT c.id, c.name, c.party, c.party_color, COUNT(v.id) AS total_votes
+            SELECT c.id, c.name, c.party, c.party_color, c.image, COUNT(v.id) AS total_votes
             FROM candidates c
             LEFT JOIN votes v ON c.id = v.candidate_id
             GROUP BY c.id
@@ -365,22 +383,71 @@ def save_biometric_data(voter_id, face_data=None):
         conn.close()
 
 # Verify captured face against the uploaded voting card front image
-def get_face_encoding_from_bytes(image_bytes):
-    if face_recognition is None:
-        logger.error("face_recognition is not installed")
+
+def is_face_recognition_available():
+    return cv2 is not None and np is not None
+
+
+def load_image_from_bytes(image_bytes):
+    if cv2 is None or np is None:
         return None
     try:
-        image = face_recognition.load_image_file(io.BytesIO(image_bytes))
-        face_encodings = face_recognition.face_encodings(image)
-        return face_encodings[0] if face_encodings else None
+        array = np.frombuffer(image_bytes, dtype=np.uint8)
+        image = cv2.imdecode(array, cv2.IMREAD_COLOR)
+        if image is None:
+            return None
+        return image
     except Exception as err:
-        logger.error(f"Face encoding error: {err}")
+        logger.error(f"Error decoding image bytes: {err}")
         return None
+
+
+def detect_face_region(image):
+    if cv2 is None:
+        return None
+    try:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+        face_cascade = cv2.CascadeClassifier(cascade_path)
+        if face_cascade.empty():
+            logger.error("Failed to load Haar cascade for face detection")
+            return None
+        faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(80, 80))
+        if len(faces) == 0:
+            return None
+        x, y, w, h = faces[0]
+        face = gray[y:y+h, x:x+w]
+        face = cv2.resize(face, (200, 200), interpolation=cv2.INTER_AREA)
+        return face
+    except Exception as err:
+        logger.error(f"Error detecting face region: {err}")
+        return None
+
+
+def compare_face_regions(face1, face2):
+    if cv2 is None:
+        return False, 0
+    try:
+        orb = cv2.ORB_create(500)
+        kp1, des1 = orb.detectAndCompute(face1, None)
+        kp2, des2 = orb.detectAndCompute(face2, None)
+        if des1 is None or des2 is None or not kp1 or not kp2:
+            return False, 0
+        bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+        matches = bf.match(des1, des2)
+        if not matches:
+            return False, 0
+        good_matches = [m for m in matches if m.distance < 70]
+        match_ratio = len(good_matches) / max(1, min(len(kp1), len(kp2)))
+        return len(good_matches) >= 8 and match_ratio >= 0.08, len(good_matches)
+    except Exception as err:
+        logger.error(f"Error comparing face regions: {err}")
+        return False, 0
 
 
 def verify_face_against_voting_card(voter_id, captured_image_bytes):
-    if face_recognition is None:
-        return False, "Face recognition module is not installed. Please install requirements and restart the app."
+    if not is_face_recognition_available():
+        return False, "Face verification support is not available. Please install requirements and restart the app."
     conn = get_db_connection()
     if not conn:
         return False, "Database connection error"
@@ -393,20 +460,18 @@ def verify_face_against_voting_card(voter_id, captured_image_bytes):
             return False, "Please upload the front of your voting card before scanning your face."
 
         card_bytes = row['voting_card_front']
-        card_face_encoding = get_face_encoding_from_bytes(card_bytes)
-        if card_face_encoding is None:
+        card_face = detect_face_region(load_image_from_bytes(card_bytes))
+        if card_face is None:
             return False, "No face was detected on the uploaded voting card. Please upload a clear front image."
 
-        captured_face_encoding = get_face_encoding_from_bytes(captured_image_bytes)
-        if captured_face_encoding is None:
+        captured_face = detect_face_region(load_image_from_bytes(captured_image_bytes))
+        if captured_face is None:
             return False, "No face was detected in the live capture. Please keep your face centered and try again."
 
-        distance = face_recognition.face_distance([card_face_encoding], captured_face_encoding)[0]
-        is_match = face_recognition.compare_faces([card_face_encoding], captured_face_encoding, tolerance=0.55)[0]
-
+        is_match, good_matches = compare_face_regions(card_face, captured_face)
         if is_match:
-            return True, f"Face verified successfully (match distance={distance:.3f})."
-        return False, f"Face did not match the voting card photo (distance={distance:.3f}). Please try again."
+            return True, f"Face verified successfully ({good_matches} matched features)."
+        return False, f"Face did not match the voting card photo ({good_matches} matched features). Please try again."
     except Exception as err:
         logger.error(f"Error verifying face against voting card: {err}")
         return False, "Face verification failed due to a server error."
@@ -414,107 +479,192 @@ def verify_face_against_voting_card(voter_id, captured_image_bytes):
         cursor.close()
         conn.close()
 
-# Route: Home page (login section)
+
+def verify_face_against_registered_face(voter_id, captured_image_bytes):
+    if not is_face_recognition_available():
+        return False, "Face verification support is not available. Please install requirements and restart the app."
+
+    conn = get_db_connection()
+    if not conn:
+        return False, "Database connection error"
+
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute("SELECT face_data FROM voters WHERE id=%s", (voter_id,))
+        row = cursor.fetchone()
+        if not row or not row.get('face_data'):
+            return False, "No registered face template found. Please register or upload your ID card."
+
+        registered_face_region = detect_face_region(load_image_from_bytes(row['face_data']))
+        captured_face_region = detect_face_region(load_image_from_bytes(captured_image_bytes))
+        if registered_face_region is None or captured_face_region is None:
+            return False, "No face was detected in the registered image or live capture. Please try again."
+
+        is_match, good_matches = compare_face_regions(registered_face_region, captured_face_region)
+        if is_match:
+            return True, f"Face matched registered identity ({good_matches} matched features)."
+        return False, f"Face did not match the registered profile ({good_matches} matched features)."
+    except Exception as err:
+        logger.error(f"Error verifying face against registered face: {err}")
+        return False, "Face verification failed due to a server error."
+    finally:
+        cursor.close()
+        conn.close()
+
+# Route: Registration page (home page)
 @app.route("/", methods=["GET", "POST"])
-def index():
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    if request.method == "POST":
+        id_number = request.form.get("id_number", "").strip()
+        first_name = request.form.get("first_name", "").strip()
+        middle_name = request.form.get("middle_name", "").strip()
+        last_name = request.form.get("last_name", "").strip()
+        phone = request.form.get("phone", "").strip()
+        email = request.form.get("email", "").strip()
+        face_image = request.form.get("face_image_data", "").strip()
+
+        name = " ".join(filter(None, [first_name, middle_name, last_name])).strip()
+
+        if not all([id_number, first_name, last_name, phone, email, face_image]):
+            flash("All fields and face capture are required for registration.", "error")
+            return redirect(url_for("register"))
+
+        if "," in face_image:
+            face_image = face_image.split(",", 1)[1]
+
+        try:
+            face_bytes = base64.b64decode(face_image, validate=True)
+        except Exception:
+            try:
+                face_bytes = base64.b64decode(face_image)
+            except Exception:
+                flash("Invalid face image data. Please capture your face again.", "error")
+                return redirect(url_for("register"))
+
+        conn = get_db_connection()
+        if not conn:
+            flash("Database connection error", "error")
+            return redirect(url_for("register"))
+
+        cursor = conn.cursor(dictionary=True)
+        try:
+            cursor.execute("SELECT id FROM voters WHERE id_number=%s", (id_number,))
+            if cursor.fetchone():
+                flash("A voter with this ID already exists. Please login instead.", "warning")
+                return redirect(url_for("login"))
+
+            cursor.execute(
+                "INSERT INTO voters (id_number, name, phone, email, face_data) VALUES (%s, %s, %s, %s, %s)",
+                (id_number, name, phone, email, face_bytes)
+            )
+            conn.commit()
+            flash("Registration complete. Please login now.", "success")
+            return redirect(url_for("login"))
+        except mysql.connector.Error as err:
+            logger.error(f"Database error during registration: {err}")
+            flash("Registration failed. Please try again.", "error")
+            return redirect(url_for("register"))
+        finally:
+            cursor.close()
+            conn.close()
+
+    return render_template(
+        "register.html",
+        face_module_available=is_face_recognition_available(),
+        marquee_text="ÉlectCam — Register to Vote"
+    )
+
+# Route: Login page
+@app.route("/login", methods=["GET", "POST"])
+def login():
     if request.method == "POST":
         # Check if user is already voting
         if 'voter_id' in session:
             return redirect(url_for("vote"))
-        
-        # Get form data
+
         id_number = request.form.get("id_number", "").strip()
-        name = request.form.get("name", "").strip()
+        first_name = request.form.get("first_name", "").strip()
+        middle_name = request.form.get("middle_name", "").strip()
+        last_name = request.form.get("last_name", "").strip()
         phone = request.form.get("phone", "").strip()
         email = request.form.get("email", "").strip()
-        
-        if not all([id_number, name, phone, email]):
+
+        name = " ".join(filter(None, [first_name, middle_name, last_name])).strip()
+
+        if not all([id_number, first_name, last_name, phone, email]):
             flash("All fields are required!", "error")
-            return redirect(url_for("index"))
-        
+            return redirect(url_for("login"))
+
         conn = get_db_connection()
         if not conn:
             flash("Database connection error", "error")
-            return redirect(url_for("index"))
-        
+            return redirect(url_for("login"))
+
         cursor = conn.cursor(dictionary=True)
-        
         try:
-            # Check if voter exists and has already voted
             cursor.execute("SELECT * FROM voters WHERE id_number=%s", (id_number,))
             voter = cursor.fetchone()
-            
+
             if voter:
                 if voter['has_voted']:
                     flash("You have already voted! Each voter can only vote once.", "error")
-                    cursor.close()
-                    conn.close()
                     return redirect(url_for("results"))
-                else:
-                    # Update voter info
-                    cursor.execute(
-                        "UPDATE voters SET name=%s, phone=%s, email=%s WHERE id_number=%s",
-                        (name, phone, email, id_number)
-                    )
-                    conn.commit()
-                    session['voter_id'] = voter['id']
-                    session['voter_id_number'] = id_number
-            else:
-                # Register new voter
-                cursor.execute(
-                    "INSERT INTO voters (id_number, name, phone, email) VALUES (%s, %s, %s, %s)",
-                    (id_number, name, phone, email)
-                )
-                conn.commit()
-                cursor.execute("SELECT id FROM voters WHERE id_number=%s", (id_number,))
-                voter = cursor.fetchone()
+
+                if voter['name'] != name or voter['phone'] != phone or voter['email'] != email:
+                    flash("Credentials do not match the registered voter. Please use the same details from registration.", "error")
+                    return redirect(url_for("login"))
+
                 session['voter_id'] = voter['id']
                 session['voter_id_number'] = id_number
-            
-            flash("Login successful! Please verify your face against your voting card to continue.", "success")
-            cursor.close()
-            conn.close()
+                session.pop('face_verified', None)
+            else:
+                flash("No registration found for that ID. Please register first.", "warning")
+                return redirect(url_for("register"))
+
+            flash("Login successful! Please verify your face to continue.", "success")
             return redirect(url_for("verify"))
-        
         except mysql.connector.Error as err:
             logger.error(f"Database error during login: {err}")
             flash("Login failed. Please try again.", "error")
+            return redirect(url_for("login"))
+        finally:
             cursor.close()
             conn.close()
-            return redirect(url_for("index"))
-    
-    # For GET, provide candidates list (if any) so page is single-page
+
     voter = get_current_voter()
     candidates = fetch_candidates()
     results, winner = fetch_results()
     return render_template(
-        "index.html",
+        "login.html",
         candidates=candidates,
         results=results,
         winner=winner,
         voter=voter,
-        face_module_available=is_face_recognition_available()
+        face_module_available=is_face_recognition_available(),
+        marquee_text="ÉlectCam — Voter Login"
     )
 
 @app.route("/verify")
 def verify():
     if 'voter_id' not in session:
         flash("Please login first", "warning")
-        return redirect(url_for("index"))
+        return redirect(url_for("login"))
 
     voter = get_current_voter()
     if not voter:
         session.clear()
         flash("Please login again.", "warning")
-        return redirect(url_for("index"))
+        return redirect(url_for("login"))
 
-    if has_biometric_verification(voter):
+    if session.get('face_verified'):
         return redirect(url_for("vote"))
 
     return render_template(
         "verify.html",
         voter=voter,
-        face_module_available=is_face_recognition_available()
+        face_module_available=is_face_recognition_available(),
+        marquee_text="ÉlectCam — Face Verification"
     )
 
 # Route: Voting page (biometric verification + voting)
@@ -522,71 +672,74 @@ def verify():
 def vote():
     if 'voter_id' not in session:
         flash("Please login first", "warning")
-        return redirect(url_for("index"))
-    
+        return redirect(url_for("login"))
+
     conn = get_db_connection()
     if not conn:
         flash("Database connection error", "error")
-        return redirect(url_for("index"))
-    
+        return redirect(url_for("login"))
+
     cursor = conn.cursor(dictionary=True)
-    
     try:
         # Get voter info
         cursor.execute("SELECT * FROM voters WHERE id=%s", (session['voter_id'],))
         voter = cursor.fetchone()
-        
+
         if not voter:
             flash("Voter not found", "error")
-            return redirect(url_for("index"))
-        
-        if not has_biometric_verification(voter):
-            flash("Please complete biometric verification to confirm your ID before voting.", "warning")
-            cursor.close()
-            conn.close()
-            return redirect(url_for("index"))
+            return redirect(url_for("login"))
+
+        if not has_identity_verification(voter):
+            flash("Please upload both sides of your ID card and complete biometric verification to confirm your identity before voting.", "warning")
+            return redirect(url_for("login"))
+
+        if not session.get('face_verified'):
+            flash("Please verify your face before voting.", "warning")
+            return redirect(url_for("verify"))
 
         if voter['has_voted']:
             flash("You have already voted!", "error")
-            cursor.close()
-            conn.close()
             return redirect(url_for("results"))
-        
+
         # Get all candidates
         cursor.execute("SELECT * FROM candidates ORDER BY id")
         candidates = cursor.fetchall()
-        
+
         if request.method == "POST":
             candidate_id = request.form.get("candidate_id") or request.form.get("candidate")
-            
+
             if not candidate_id:
                 flash("Please select a candidate", "warning")
                 return render_template("vote.html", candidates=candidates, voter=voter)
-            
+
             try:
                 if not record_vote(session['voter_id'], int(candidate_id)):
                     raise mysql.connector.Error("Vote persistence failed")
 
-                # Clear session after successful vote
                 session.clear()
-
                 flash("Vote submitted successfully!", "success")
-                cursor.close()
-                conn.close()
                 return redirect(url_for("results"))
             except mysql.connector.Error as err:
                 logger.error(f"Error submitting vote: {err}")
                 flash("Error submitting vote. Please try again.", "error")
-                return render_template("vote.html", candidates=candidates, voter=voter)
-        
-        cursor.close()
-        conn.close()
-        return render_template("vote.html", candidates=candidates, voter=voter)
-    
+                return render_template(
+                    "vote.html",
+                    candidates=candidates,
+                    voter=voter,
+                    marquee_text="ÉlectCam — Cast Your Vote"
+                )
+
+        return render_template(
+            "vote.html",
+            candidates=candidates,
+            voter=voter,
+            marquee_text="ÉlectCam — Cast Your Vote"
+        )
+
     except mysql.connector.Error as err:
         logger.error(f"Database error in voting: {err}")
         flash("Database error", "error")
-        return redirect(url_for("index"))
+        return redirect(url_for("login"))
     finally:
         cursor.close()
         conn.close()
@@ -641,6 +794,9 @@ def capture_face():
     if 'voter_id' not in session:
         return jsonify({"success": False, "message": "Not authenticated"}), 401
     
+    if not is_face_recognition_available():
+        return jsonify({"success": False, "message": "Face verification support is not available. Please install requirements and restart the app."}), 500
+
     try:
         data = request.get_json()
         image_data = data.get("image_data") if isinstance(data, dict) else None
@@ -655,15 +811,43 @@ def capture_face():
         except Exception:
             image_binary = base64.b64decode(image_data)
 
-        match, message = verify_face_against_voting_card(session['voter_id'], image_binary)
-        if not match:
+        voter = get_current_voter()
+        if not voter:
+            return jsonify({"success": False, "message": "Voter session invalid"}), 401
+
+        if voter.get('face_data'):
+            success, message = verify_face_against_registered_face(voter['id'], image_binary)
+        elif voter.get('voting_card_front'):
+            success, message = verify_face_against_voting_card(voter['id'], image_binary)
+        else:
+            return jsonify({"success": False, "message": "No reference face template or voting card available for verification."}), 400
+
+        if not success:
             return jsonify({"success": False, "message": message}), 400
 
-        if not save_biometric_data(session['voter_id'], face_data=image_binary):
-            logger.error("Unable to save biometric face data for voter_id=%s", session['voter_id'])
-            return jsonify({"success": False, "message": "Failed to save face data"}), 500
-        
-        return jsonify({"success": True, "message": message}), 200
+        if not voter.get('face_data'):
+            if not save_biometric_data(voter['id'], face_data=image_binary):
+                logger.error("Unable to save biometric face data for voter_id=%s", voter['id'])
+                return jsonify({"success": False, "message": "Failed to save face data"}), 500
+
+        session['face_verified'] = True
+
+        conn = get_db_connection()
+        has_voted = False
+        if conn:
+            cursor = conn.cursor(dictionary=True)
+            try:
+                cursor.execute("SELECT has_voted FROM voters WHERE id=%s", (voter['id'],))
+                row = cursor.fetchone()
+                has_voted = bool(row and row.get('has_voted'))
+            except mysql.connector.Error as err:
+                logger.error(f"Error checking vote status after face capture: {err}")
+            finally:
+                cursor.close()
+                conn.close()
+
+        redirect_url = url_for('results') if has_voted else url_for('vote')
+        return jsonify({"success": True, "message": message, "redirect": redirect_url}), 200
     
     except Exception as e:
         logger.error(f"Error capturing face: {e}", exc_info=True)
@@ -675,7 +859,7 @@ def results():
     conn = get_db_connection()
     if not conn:
         flash("Database connection error", "error")
-        return redirect(url_for("index"))
+        return redirect(url_for("login"))
     
     cursor = conn.cursor(dictionary=True)
     
@@ -705,7 +889,7 @@ def results():
     except mysql.connector.Error as err:
         logger.error(f"Error fetching results: {err}")
         flash("Error fetching results", "error")
-        return redirect(url_for("index"))
+        return redirect(url_for("login"))
     finally:
         cursor.close()
         conn.close()
@@ -747,7 +931,7 @@ def results_api():
 def logout():
     session.clear()
     flash("Logged out successfully", "info")
-    return redirect(url_for("index"))
+    return redirect(url_for("login"))
 
 # Route: Health check
 @app.route("/health")

@@ -1,25 +1,3 @@
-let voteChart = null;
-
-async function loadChart() {
-  const resp = await fetch('/api/results');
-  const data = await resp.json();
-
-  const labels = data.map(d => d.name);
-  const votes = data.map(d => d.votes);
-  const colors = data.map(d => d.party_color || '#888');
-
-  const ctx = document.getElementById('voteChart').getContext('2d');
-  if (voteChart) voteChart.destroy();
-  voteChart = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels,
-      datasets: [{ label: 'Votes', data: votes, backgroundColor: colors }]
-    },
-    options: { responsive: true, scales: { y: { beginAtZero: true } } }
-  });
-}
-
 // File previews for ID card uploads
 function previewFile(inputEl, imgElId) {
   const file = inputEl.files[0];
@@ -131,7 +109,69 @@ async function sendFace(imageData) {
   return res.json();
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+let scanInProgress = false;
+
+async function autoVerifyFace() {
+  const faceRecognitionAvailable = document.body.dataset.faceRecognition === 'true';
+  const startScanBtn = document.getElementById('startScan');
+
+  if (!faceRecognitionAvailable) {
+    setScanStatus('Face recognition is not available on the server.', 'error', true);
+    return;
+  }
+
+  if (scanInProgress) return;
+  scanInProgress = true;
+  if (startScanBtn) {
+    startScanBtn.disabled = true;
+    startScanBtn.textContent = 'Scanning...';
+  }
+
+  await startCamera();
+  setFaceGuide('Position your face inside the circle. Scanning will begin automatically.');
+  setScanStatus('Preparing face scan...', 'info', true);
+  runScanEffect(true);
+  await new Promise(resolve => setTimeout(resolve, 1200));
+  setScanStatus('Scanning your face...', 'active', true);
+  await new Promise(resolve => setTimeout(resolve, 900));
+
+  const img = await captureImage();
+  const res = await sendFace(img);
+  runScanEffect(false);
+
+  if (res.success) {
+    if (startScanBtn) {
+      startScanBtn.textContent = 'Scan Successful';
+    }
+    setScanStatus('Face captured successfully. Redirecting...', 'success', true);
+    setFaceGuide('Face scan complete. Redirecting you now.');
+    await new Promise(resolve => setTimeout(resolve, 800));
+    window.location.href = res.redirect || '/vote';
+    return;
+  }
+
+  if (startScanBtn) {
+    startScanBtn.disabled = false;
+    startScanBtn.textContent = 'Retry Face Scan';
+  }
+  setScanStatus('Scan failed. Please try again.', 'error', true);
+  setFaceGuide('Face scan failed. Adjust your position and press Retry Face Scan.');
+  alert(res.message || 'Face verification failed.');
+  scanInProgress = false;
+}
+
+async function startFaceScan() {
+  const faceRecognitionAvailable = document.body.dataset.faceRecognition === 'true';
+
+  if (!faceRecognitionAvailable) {
+    alert('Face recognition support is not available on the server. Please install required dependencies and restart the app.');
+    return;
+  }
+
+  await autoVerifyFace();
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
   const loggedIn = document.body.dataset.loggedIn === 'true';
   const requireLogin = () => {
     if (!loggedIn) {
@@ -145,24 +185,35 @@ document.addEventListener('DOMContentLoaded', () => {
   const cardBackInput = document.getElementById('cardBack');
   const btnUploadFront = document.getElementById('btnUploadFront');
   const btnUploadBack = document.getElementById('btnUploadBack');
-  const startCameraBtn = document.getElementById('startCamera');
-  const captureFaceBtn = document.getElementById('captureFace');
   const faceRecognitionAvailable = document.body.dataset.faceRecognition === 'true';
 
+  const biometricVerified = document.body.dataset.biometrics === 'true';
+  const cardUploaded = document.body.dataset.cardsUploaded === 'true';
+
   if (cardFrontInput) {
-    cardFrontInput.addEventListener('change', e => {
+    cardFrontInput.addEventListener('change', async e => {
       previewFile(e.target, 'previewFront');
-      if (loggedIn) uploadCard('front', e.target.files[0]);
+      if (!loggedIn) return;
+      const res = await uploadCard('front', e.target.files[0]);
+      alert(res.message || JSON.stringify(res));
+      if (res && res.success) {
+        // Prompt for back upload immediately
+        if (cardBackInput) cardBackInput.click();
+      }
     });
   }
   if (cardBackInput) {
-    cardBackInput.addEventListener('change', e => {
+    cardBackInput.addEventListener('change', async e => {
       previewFile(e.target, 'previewBack');
-      if (loggedIn) uploadCard('back', e.target.files[0]);
+      if (!loggedIn) return;
+      const res = await uploadCard('back', e.target.files[0]);
+      alert(res.message || JSON.stringify(res));
+      if (res && res.success) {
+        // Refresh to update server-side status and enable voting
+        window.location.reload();
+      }
     });
   }
-
-  const biometricVerified = document.body.dataset.biometrics === 'true';
 
   if (btnUploadFront) {
     btnUploadFront.addEventListener('click', () => {
@@ -174,44 +225,17 @@ document.addEventListener('DOMContentLoaded', () => {
       if (cardBackInput) cardBackInput.click();
     });
   }
-  if (startCameraBtn) {
-    startCameraBtn.addEventListener('click', startCamera);
-  }
-  if (captureFaceBtn) {
-    if (!faceRecognitionAvailable) {
-      captureFaceBtn.disabled = true;
-      captureFaceBtn.title = 'Face recognition module is not installed on the server';
-    }
-    captureFaceBtn.addEventListener('click', async () => {
-      if (!requireLogin() || !faceRecognitionAvailable) {
-        if (!faceRecognitionAvailable) {
-          alert('Face recognition module is not installed on the server. Please install it and restart the app.');
-        }
+  // main combined upload button removed; individual front/back buttons are used
+
+  const startScanBtn = document.getElementById('startScan');
+  if (startScanBtn) {
+    startScanBtn.addEventListener('click', async () => {
+      if (!requireLogin()) return;
+      if (!faceRecognitionAvailable) {
+        alert('Face recognition support is not available on the server. Please install requirements and restart the app.');
         return;
       }
-      await startCamera();
-      setFaceGuide('Keep your face inside the circle and move slowly up or down until it fits well.');
-      setScanStatus('Preparing scan... Hold still.', 'info', true);
-      runScanEffect(true);
-      await new Promise(resolve => setTimeout(resolve, 900));
-      setScanStatus('Scanning your face...', 'active', true);
-      await new Promise(resolve => setTimeout(resolve, 800));
-      const img = await captureImage();
-      const previewFront = document.getElementById('previewFront');
-      if (previewFront) previewFront.src = img; // quick preview
-      const res = await sendFace(img);
-      runScanEffect(false);
-      stopCamera();
-      if (res.success) {
-        setScanStatus('Face verified successfully. Redirecting to vote page...', 'success', true);
-        setFaceGuide('Face scan complete. You are being redirected to the voting page.');
-        await new Promise(resolve => setTimeout(resolve, 800));
-        window.location.href = '/vote';
-        return;
-      }
-      setScanStatus('Scan failed. Please try again.', 'error', true);
-      setFaceGuide('Face scan failed. Try again and keep your face centered.');
-      alert(res.message || JSON.stringify(res));
+      await autoVerifyFace();
     });
   }
 
@@ -221,18 +245,177 @@ document.addEventListener('DOMContentLoaded', () => {
         e.preventDefault();
         return;
       }
-      if (!biometricVerified) {
+      if (!(biometricVerified && cardUploaded)) {
         e.preventDefault();
-        alert('You must complete biometric verification to confirm your identity with your ID before voting.');
+        alert('You must upload both ID card sides and complete biometric capture before voting.');
+        return;
       }
     });
   });
 
-  const refreshChartButton = document.getElementById('refreshChart');
-  if (refreshChartButton) {
-    refreshChartButton.addEventListener('click', loadChart);
+
+
+  const currentPage = document.body.dataset.page;
+  if (currentPage === 'verify' && faceRecognitionAvailable) {
+    await startCamera();
+    setFaceGuide('Camera is ready. Press Start Face Scan when you are ready.');
+    setScanStatus('Camera opened. Click Start Face Scan to begin.', 'info', true);
   }
 
-  // Auto load chart on page
-  loadChart();
+  if (currentPage === 'register' && faceRecognitionAvailable) {
+    const registerCamera = document.getElementById('registerCamera');
+    const registerOverlay = document.getElementById('registerFaceOverlay');
+    const registerGuide = document.getElementById('registerFaceGuide');
+    const registerStatus = document.getElementById('registerScanStatus');
+    const faceImageField = document.getElementById('faceImageData');
+    const registerCaptureArea = document.getElementById('registerCaptureArea');
+    const startRegisterCapture = document.getElementById('startRegisterCapture');
+
+    const requiredFields = [
+      document.querySelector('input[name="first_name"]'),
+      document.querySelector('input[name="last_name"]'),
+      document.querySelector('input[name="id_number"]'),
+      document.querySelector('input[name="phone"]'),
+      document.querySelector('input[name="email"]')
+    ].filter(Boolean);
+
+    let registerCameraStarted = false;
+    let registerScanInProgress = false;
+
+    const setRegisterStatus = (message, status) => {
+      if (!registerStatus) return;
+      registerStatus.textContent = message;
+      registerStatus.className = `scan-status ${status}`;
+    };
+
+    const startRegisterCamera = async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        registerCamera.srcObject = stream;
+        registerCamera.classList.remove('hidden');
+        if (registerOverlay) registerOverlay.classList.remove('hidden');
+        if (registerGuide) registerGuide.classList.remove('hidden');
+        if (registerCaptureArea) registerCaptureArea.classList.remove('hidden');
+        if (startRegisterCapture) startRegisterCapture.textContent = 'Capture Face';
+        setRegisterStatus('Camera ready. Press Scan Face to capture your face.', 'info');
+        await waitForVideoReady(registerCamera);
+        await registerCamera.play();
+        registerCameraStarted = true;
+      } catch (e) {
+        alert('Camera access failed: ' + e.message);
+      }
+    };
+
+    const stopRegisterCamera = () => {
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        stream = null;
+      }
+      if (registerCamera) registerCamera.classList.add('hidden');
+      if (registerOverlay) registerOverlay.classList.add('hidden');
+      if (registerCaptureArea) registerCaptureArea.classList.add('hidden');
+      registerCameraStarted = false;
+      registerScanInProgress = false;
+    };
+
+    const captureRegisterImage = async () => {
+      if (registerScanInProgress) {
+        return;
+      }
+
+      if (!registerCameraStarted) {
+        await startRegisterCamera();
+      }
+
+      if (!registerCameraStarted) {
+        return;
+      }
+
+      registerScanInProgress = true;
+      if (startRegisterCapture) {
+        startRegisterCapture.disabled = true;
+        startRegisterCapture.textContent = 'Scanning...';
+      }
+      setRegisterStatus('Scanning your face for 5 seconds. Keep your head centered.', 'active');
+      if (registerGuide) {
+        registerGuide.textContent = 'Keep your head centered, eyes forward, and stay still while scanning.';
+      }
+
+      await waitForVideoReady(registerCamera);
+
+      let countdown = 5;
+      const countdownInterval = setInterval(() => {
+        countdown -= 1;
+        if (countdown > 0) {
+          setRegisterStatus(`Scanning... ${countdown}s remaining`, 'active');
+        }
+      }, 1000);
+
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      clearInterval(countdownInterval);
+
+      if (!registerCameraStarted) {
+        setRegisterStatus('Camera stopped unexpectedly. Please retry scan.', 'error');
+        if (startRegisterCapture) {
+          startRegisterCapture.disabled = false;
+          startRegisterCapture.textContent = 'Retry Scan';
+        }
+        registerScanInProgress = false;
+        return;
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = registerCamera.videoWidth || 640;
+      canvas.height = registerCamera.videoHeight || 480;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(registerCamera, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL('image/png');
+
+      const qualityOk = dataUrl && dataUrl.length > 5000;
+      if (!qualityOk) {
+        setRegisterStatus('Scan quality was not sufficient. Please try again.', 'error');
+        if (startRegisterCapture) {
+          startRegisterCapture.disabled = false;
+          startRegisterCapture.textContent = 'Retry Scan';
+        }
+        registerScanInProgress = false;
+        return;
+      }
+
+      if (faceImageField) faceImageField.value = dataUrl;
+      setRegisterStatus('Face captured successfully. Camera closed. Submit the form to complete registration.', 'success');
+      if (startRegisterCapture) {
+        startRegisterCapture.disabled = false;
+        startRegisterCapture.textContent = 'Rescan Face';
+      }
+      stopRegisterCamera();
+    };
+
+    if (startRegisterCapture) {
+      startRegisterCapture.addEventListener('click', async () => {
+        await captureRegisterImage();
+      });
+    }
+  }
+
+  if (currentPage === 'index' && loggedIn && !(biometricVerified && cardUploaded)) {
+    window.location.href = '/verify';
+  }
+
+  const siteMenuToggle = document.getElementById('siteMenuToggle');
+  const siteMenu = document.getElementById('siteMenu');
+  if (siteMenuToggle && siteMenu) {
+    siteMenuToggle.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const isOpen = siteMenu.classList.toggle('open');
+      siteMenuToggle.setAttribute('aria-expanded', isOpen);
+    });
+
+    document.addEventListener('click', (event) => {
+      if (!siteMenu.contains(event.target) && !siteMenuToggle.contains(event.target)) {
+        siteMenu.classList.remove('open');
+        siteMenuToggle.setAttribute('aria-expanded', 'false');
+      }
+    });
+  }
 });

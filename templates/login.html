@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Secure Voting System</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <script defer src="{{ url_for('static', filename='js/script.js') }}"></script>
+</head>
+<body data-page="login" data-logged-in="{{ 'true' if voter else 'false' }}" data-biometrics="{{ 'true' if voter and (voter['face_data'] or voter.get('fingerprint_data')) else 'false' }}" data-cards-uploaded="{{ 'true' if voter and voter.get('voting_card_front') and voter.get('voting_card_back') else 'false' }}" data-face-recognition="{{ 'true' if face_module_available else 'false' }}">
+  <div class="site-marquee">
+    <img class="marquee-flag" src="{{ url_for('static', filename='images/crm.jpg') }}" alt="Cameroon flag">
+    <div class="marquee-track">
+      <span>{{ marquee_text or 'ÉlectCam — Cameroon Electoral Registration' }} • {{ marquee_text or 'ÉlectCam — Cameroon Electoral Registration' }}</span>
+    </div>
+  </div>
+
+  <header>
+    <h1>
+      <img class="header-flag" src="{{ url_for('static', filename='images/crm.jpg') }}" alt="Cameroon flag">
+      Secure Voting System
+      <img class="header-flag" src="{{ url_for('static', filename='images/crm.jpg') }}" alt="Cameroon flag">
+    </h1>
+    <div class="header-nav">
+      <button class="dropdown-toggle" id="siteMenuToggle" type="button" aria-expanded="false" aria-controls="siteMenu">
+        Menu ▾
+      </button>
+      <div class="dropdown-menu" id="siteMenu">
+        <a href="{{ url_for('register') }}">Register</a>
+        <a href="{{ url_for('login') }}">Login</a>
+        <a href="{{ url_for('results') }}">Live Results</a>
+      </div>
+    </div>
+  </header>
+
+  <div class="page-container">
+    <section class="hero-card panel">
+      <div class="flag-ribbon">
+        <img src="{{ url_for('static', filename='images/crm.jpg') }}" alt="flag"/>
+        <img src="{{ url_for('static', filename='images/crm.jpg') }}" alt="flag"/>
+        <img src="{{ url_for('static', filename='images/crm.jpg') }}" alt="flag"/>
+      </div>
+      <form id="loginForm" method="POST">
+        <div class="hero-inner">
+          <div class="login-left-col">
+            <h2 class="section-title">Voter Login</h2>
+
+            {% with messages = get_flashed_messages(with_categories=true) %}
+              {% if messages %}
+                <ul class="flashes">
+                  {% for category, message in messages %}
+                    <li class="flash {{ category }}">{{ message }}</li>
+                  {% endfor %}
+                </ul>
+              {% endif %}
+            {% endwith %}
+
+            <label>First Name:</label>
+            <input type="text" name="first_name" placeholder="First Name" required>
+            <label>Middle Name (optional):</label>
+            <input type="text" name="middle_name" placeholder="Middle Name">
+            <label>Last Name:</label>
+            <input type="text" name="last_name" placeholder="Last Name" required>
+            <label>ID Number:</label>
+            <input type="text" name="id_number" placeholder="ID Number" required value="{{ voter.id_number if voter }}">
+            <label>Phone:</label>
+            <input type="tel" name="phone" placeholder="Telephone" required value="{{ voter.phone if voter }}">
+            <label>Email:</label>
+            <input type="email" name="email" placeholder="Email" required value="{{ voter.email if voter }}">
+
+            <div class="action-row">
+              <button type="submit" class="btn primary">Login</button>
+              <a href="{{ url_for('register') }}" class="btn secondary">Register</a>
+            </div>
+          </div>
+        </div>
+      </form>
+    </section>
+  </div>
+</body>
+</html>

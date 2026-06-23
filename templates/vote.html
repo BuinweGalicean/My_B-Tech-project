@@ -1,13 +1,30 @@
 <!DOCTYPE html>
 <html>
 <head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Cast Your Vote</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
-<body>
+<body data-page="vote" data-logged-in="true">
+  <div class="site-marquee">
+    <img class="marquee-flag" src="{{ url_for('static', filename='images/crm.jpg') }}" alt="Cameroon flag">
+    <div class="marquee-track">
+      <span>{{ marquee_text or 'ÉLECTCAM — Cameroon Presidential Election 2030} • {{ marquee_text or 'ÉLECTCAM — Cameroon Presidential Election 2030' }}</span>
+    </div>
+  </div>
   <header>
     <h1>Cast Your Vote</h1>
+    <div class="header-nav">
+      <button class="dropdown-toggle" id="siteMenuToggle" type="button" aria-expanded="false" aria-controls="siteMenu">
+        Menu ▾
+      </button>
+      <div class="dropdown-menu" id="siteMenu">
+        <a href="{{ url_for('register') }}">Register</a>
+        <a href="{{ url_for('login') }}">Login</a>
+        <a href="{{ url_for('results') }}">Live Results</a>
+      </div>
+    </div>
   </header>
   <div class="page-container">
     <section class="panel vote-panel">
@@ -28,15 +45,10 @@
       {% endfor %}
         </form>
 
-        <div class="chart-container">
-          <h3>Live Vote Count</h3>
-          <canvas id="voteChart"></canvas>
-          <button type="button" class="btn secondary" onclick="loadChart()">Refresh Chart</button>
-        </div>
       </div>
     </section>
   </div>
 
-  <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+  <script defer src="{{ url_for('static', filename='js/script.js') }}"></script>
 </body>
 </html>

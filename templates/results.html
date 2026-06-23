@@ -1,10 +1,31 @@
 <!DOCTYPE html>
 <html>
 <head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Election Results</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
+  <div class="site-marquee">
+    <img class="marquee-flag" src="{{ url_for('static', filename='images/crm.jpg') }}" alt="Cameroon flag">
+    <div class="marquee-track">
+      <span>{{ marquee_text or 'ÉlectCam — Cameroon Electoral Registration' }} • {{ marquee_text or 'ÉlectCam — Cameroon Electoral Registration' }}</span>
+    </div>
+  </div>
+  <header>
+    <h1>Election Results</h1>
+    <div class="header-nav">
+      <button class="dropdown-toggle" id="siteMenuToggle" type="button" aria-expanded="false" aria-controls="siteMenu">
+        Menu ▾
+      </button>
+      <div class="dropdown-menu" id="siteMenu">
+        <a href="{{ url_for('register') }}">Register</a>
+        <a href="{{ url_for('login') }}">Login</a>
+        <a href="{{ url_for('results') }}">Live Results</a>
+      </div>
+    </div>
+  </header>
   <h2>Election Results</h2>
   {% with messages = get_flashed_messages(with_categories=true) %}
     {% if messages %}
@@ -17,15 +38,28 @@
   {% endwith %}
   {% if winner %}
     <div class="winner-banner">
-      🏆 Winner! {{ winner.name }} ({{ winner.party }}) 🏆
+      <div class="winner-inner">
+        <div class="winner-image-wrapper">
+          <img class="winner-image" src="{{ url_for('static', filename='images/' + (winner.image or 'crm.jpg')) }}" alt="{{ winner.name }}" />
+        </div>
+        <div class="winner-text-wrapper">
+          <div class="winner-text">Winner!</div>
+          <div class="winner-name">{{ winner.name }}</div>
+          <div class="winner-party">{{ winner.party }}</div>
+        </div>
+      </div>
     </div>
   {% endif %}
   <p>Total votes cast: {{ total_votes }}</p>
-  <table>
-    <tr><th>Candidate</th><th>Party</th><th>Votes</th></tr>
-    {% for row in results %}
-      <tr><td>{{ row.name }}</td><td>{{ row.party }}</td><td>{{ row.total_votes }}</td></tr>
-    {% endfor %}
-  </table>
+  <div class="table-responsive">
+    <table id="resultsTable">
+      <thead><tr><th>Candidate</th><th>Party</th><th>Votes</th></tr></thead>
+      <tbody>
+      {% for row in results %}
+        <tr><td>{{ row.name }}</td><td>{{ row.party }}</td><td>{{ row.total_votes }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </body>
 </html>

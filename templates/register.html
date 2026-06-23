@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Register to Vote</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <script defer src="{{ url_for('static', filename='js/script.js') }}"></script>
+</head>
+<body data-page="register" data-face-recognition="{{ 'true' if face_module_available else 'false' }}">
+  <div class="site-marquee">
+    <img class="marquee-flag" src="{{ url_for('static', filename='images/crm.jpg') }}" alt="Cameroon flag">
+    <div class="marquee-track">
+      <span>{{ marquee_text or 'ÉLECTCAM — Cameroon Electoral Registration' }} • {{ marquee_text or 'ÉLECTCAM — Cameroon Electoral Registration' }}</span>
+    </div>
+  </div>
+  <header>
+    <h1>
+      <img class="header-flag" src="{{ url_for('static', filename='images/crm.jpg') }}" alt="Cameroon flag">
+      Register to Vote
+      <img class="header-flag" src="{{ url_for('static', filename='images/crm.jpg') }}" alt="Cameroon flag">
+    </h1>
+    <div class="header-nav">
+      <button class="dropdown-toggle" id="siteMenuToggle" type="button" aria-expanded="false" aria-controls="siteMenu">
+        Menu ▾
+      </button>
+      <div class="dropdown-menu" id="siteMenu">
+        <a href="{{ url_for('register') }}">Register</a>
+        <a href="{{ url_for('login') }}">Login</a>
+        <a href="{{ url_for('results') }}">Live Results</a>
+      </div>
+    </div>
+  </header>
+
+  <div class="page-container">
+    <div class="body-theme-strip"></div>
+    <section class="panel register-info-card">
+      <h2>Create Your Voter Profile</h2>
+      <p>Enter your details and capture your face. After registration you will be redirected to login.</p>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          <ul class="flashes">
+            {% for category, message in messages %}
+              <li class="flash {{ category }}">{{ message }}</li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+      {% endwith %}
+
+      <form id="registerForm" method="POST">
+        <label>First Name:</label>
+        <input type="text" name="first_name" placeholder="First Name" required>
+        <label>Middle Name (optional):</label>
+        <input type="text" name="middle_name" placeholder="Middle Name">
+        <label>Last Name:</label>
+        <input type="text" name="last_name" placeholder="Last Name" required>
+        <label>ID Number:</label>
+        <input type="text" name="id_number" placeholder="ID Number" required>
+        <label>Phone:</label>
+        <input type="tel" name="phone" placeholder="Telephone" required>
+        <label>Email:</label>
+        <input type="email" name="email" placeholder="Email" required>
+
+        <div class="camera-preview register-camera hidden" id="registerCaptureArea">
+          <video id="registerCamera" autoplay muted playsinline></video>
+          <div class="circle-overlay hidden" id="registerFaceOverlay"></div>
+          <div id="registerScanStatus" class="scan-status hidden">Ready to capture</div>
+        </div>
+
+        <div id="registerFaceGuide" class="face-guide hidden">
+          Position your head so your face is centered in the circle. Click Scan Face to begin a 5-second face scan.
+        </div>
+
+        <div class="form-bottom-actions">
+          <button type="button" class="btn biometric" id="startRegisterCapture">Scan Face</button>
+        </div>
+
+        <div class="action-row">
+          <button type="submit" class="btn primary">Submit</button>
+        </div>
+        <p class="notice">Use Scan Face first, then submit your registration.</p>
+
+        <input type="hidden" name="face_image_data" id="faceImageData">
+      </form>
+
+      <p class="notice">After registration, use your ID and face to log in.</p>
+    </section>
+  </div>
+</body>
+</html>
