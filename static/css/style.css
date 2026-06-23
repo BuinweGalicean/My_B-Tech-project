@@ -163,16 +163,30 @@ body[data-page="login"] .login-left-col {
   border-radius: 24px;
   background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(245,247,250,0.98));
   border: 1px solid rgba(144, 202, 82, 0.18);
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 16px;
+  row-gap: 12px;
+  align-items: center;
+}
+
+body[data-page="login"] .login-left-col .section-title,
+body[data-page="login"] .login-left-col .flashes,
+body[data-page="login"] .login-left-col .action-row {
+  grid-column: 1 / -1;
 }
 
 body[data-page="login"] .login-left-col label {
   color: #1b3527;
   font-weight: 600;
+  margin-top: 0;
+  text-align: left;
 }
 
 body[data-page="login"] .login-left-col input {
   background: #fff;
   border: 1px solid rgba(13, 66, 34, 0.15);
+  margin-top: 0;
 }
 
 body[data-page="login"] .form-actions {
