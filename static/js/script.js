@@ -1,22 +1,3 @@
-// File previews for ID card uploads
-function previewFile(inputEl, imgElId) {
-  const file = inputEl.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = e => document.getElementById(imgElId).src = e.target.result;
-  reader.readAsDataURL(file);
-}
-
-// Upload file to server (voter must be logged-in session-wise)
-async function uploadCard(side, file) {
-  if (!file) return;
-  const fd = new FormData();
-  fd.append('file', file);
-  fd.append('side', side);
-  const res = await fetch('/upload-voting-card', { method: 'POST', body: fd });
-  return res.json();
-}
-
 // Camera handling
 let stream = null;
 async function waitForVideoReady(video) {
@@ -150,14 +131,53 @@ async function autoVerifyFace() {
     return;
   }
 
+  if (res.fallback) {
+    stopCamera();
+    setScanStatus('Face verification failed.', 'error', true);
+    showFingerprintStage();
+    scanInProgress = false;
+    return;
+  }
+
+  const attemptsLeft = typeof res.attempts_left === 'number' ? res.attempts_left : null;
   if (startScanBtn) {
     startScanBtn.disabled = false;
-    startScanBtn.textContent = 'Retry Face Scan';
+    startScanBtn.textContent = attemptsLeft !== null
+      ? `Retry Face Scan (${attemptsLeft} left)`
+      : 'Retry Face Scan';
   }
-  setScanStatus('Scan failed. Please try again.', 'error', true);
+  const leftMsg = attemptsLeft !== null ? ` ${attemptsLeft} attempt(s) left.` : '';
+  setScanStatus(`Scan failed. Please try again.${leftMsg}`, 'error', true);
   setFaceGuide('Face scan failed. Adjust your position and press Retry Face Scan.');
-  alert(res.message || 'Face verification failed.');
+  alert((res.message || 'Face verification failed.') + leftMsg);
   scanInProgress = false;
+}
+
+function showFingerprintStage() {
+  const faceStage = document.getElementById('faceStage');
+  const fingerprintStage = document.getElementById('fingerprintStage');
+  if (faceStage) faceStage.classList.add('hidden');
+  if (fingerprintStage) fingerprintStage.classList.remove('hidden');
+}
+
+function showIdUploadStage() {
+  const fingerprintStage = document.getElementById('fingerprintStage');
+  const idUploadStage = document.getElementById('idUploadStage');
+  if (fingerprintStage) fingerprintStage.classList.add('hidden');
+  if (idUploadStage) idUploadStage.classList.remove('hidden');
+}
+
+async function captureFingerprint() {
+  const res = await fetch('/capture-fingerprint', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  return res.json();
+}
+
+async function uploadIdCard(side, file) {
+  const formData = new FormData();
+  formData.append('side', side);
+  formData.append('file', file);
+  const res = await fetch('/upload-voting-card', { method: 'POST', body: formData });
+  return res.json();
 }
 
 async function startFaceScan() {
@@ -181,51 +201,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     return true;
   };
 
-  const cardFrontInput = document.getElementById('cardFront');
-  const cardBackInput = document.getElementById('cardBack');
-  const btnUploadFront = document.getElementById('btnUploadFront');
-  const btnUploadBack = document.getElementById('btnUploadBack');
   const faceRecognitionAvailable = document.body.dataset.faceRecognition === 'true';
 
   const biometricVerified = document.body.dataset.biometrics === 'true';
-  const cardUploaded = document.body.dataset.cardsUploaded === 'true';
-
-  if (cardFrontInput) {
-    cardFrontInput.addEventListener('change', async e => {
-      previewFile(e.target, 'previewFront');
-      if (!loggedIn) return;
-      const res = await uploadCard('front', e.target.files[0]);
-      alert(res.message || JSON.stringify(res));
-      if (res && res.success) {
-        // Prompt for back upload immediately
-        if (cardBackInput) cardBackInput.click();
-      }
-    });
-  }
-  if (cardBackInput) {
-    cardBackInput.addEventListener('change', async e => {
-      previewFile(e.target, 'previewBack');
-      if (!loggedIn) return;
-      const res = await uploadCard('back', e.target.files[0]);
-      alert(res.message || JSON.stringify(res));
-      if (res && res.success) {
-        // Refresh to update server-side status and enable voting
-        window.location.reload();
-      }
-    });
-  }
-
-  if (btnUploadFront) {
-    btnUploadFront.addEventListener('click', () => {
-      if (cardFrontInput) cardFrontInput.click();
-    });
-  }
-  if (btnUploadBack) {
-    btnUploadBack.addEventListener('click', () => {
-      if (cardBackInput) cardBackInput.click();
-    });
-  }
-  // main combined upload button removed; individual front/back buttons are used
 
   const startScanBtn = document.getElementById('startScan');
   if (startScanBtn) {
@@ -245,9 +223,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         e.preventDefault();
         return;
       }
-      if (!(biometricVerified && cardUploaded)) {
+      if (!biometricVerified) {
         e.preventDefault();
-        alert('You must upload both ID card sides and complete biometric capture before voting.');
+        alert('You must complete face verification before voting.');
         return;
       }
     });
@@ -260,6 +238,102 @@ document.addEventListener('DOMContentLoaded', async () => {
     await startCamera();
     setFaceGuide('Camera is ready. Press Start Face Scan when you are ready.');
     setScanStatus('Camera opened. Click Start Face Scan to begin.', 'info', true);
+  }
+
+  if (currentPage === 'verify') {
+    const fingerprintBtn = document.getElementById('captureFingerprint');
+    const fingerprintScanner = document.getElementById('fingerprintScanner');
+    const fingerprintStatus = document.getElementById('fingerprintStatus');
+    if (fingerprintBtn) {
+      fingerprintBtn.addEventListener('click', async () => {
+        if (!requireLogin()) return;
+        fingerprintBtn.disabled = true;
+        fingerprintBtn.textContent = 'Capturing...';
+        if (fingerprintScanner) fingerprintScanner.classList.add('scanning');
+        if (fingerprintStatus) {
+          fingerprintStatus.textContent = 'Reading fingerprint...';
+          fingerprintStatus.className = 'scan-status active';
+          fingerprintStatus.style.position = 'static';
+          fingerprintStatus.style.transform = 'none';
+        }
+        try {
+          const res = await captureFingerprint();
+          if (fingerprintScanner) fingerprintScanner.classList.remove('scanning');
+          if (res.success) {
+            if (fingerprintScanner) fingerprintScanner.classList.add('captured');
+            if (fingerprintStatus) {
+              fingerprintStatus.textContent = 'Fingerprint captured successfully.';
+              fingerprintStatus.className = 'scan-status success';
+            }
+            fingerprintBtn.textContent = 'Captured';
+            await new Promise(r => setTimeout(r, 800));
+            showIdUploadStage();
+          } else {
+            fingerprintBtn.disabled = false;
+            fingerprintBtn.textContent = 'Retry Fingerprint';
+            if (fingerprintStatus) {
+              fingerprintStatus.textContent = res.message || 'Fingerprint capture failed.';
+              fingerprintStatus.className = 'scan-status error';
+            }
+            alert(res.message || 'Fingerprint capture failed.');
+          }
+        } catch (e) {
+          if (fingerprintScanner) fingerprintScanner.classList.remove('scanning');
+          fingerprintBtn.disabled = false;
+          fingerprintBtn.textContent = 'Retry Fingerprint';
+          alert('Fingerprint capture failed: ' + e.message);
+        }
+      });
+    }
+
+    const idUploadStatus = document.getElementById('idUploadStatus');
+    const setIdStatus = (msg, type) => {
+      if (!idUploadStatus) return;
+      idUploadStatus.textContent = msg;
+      idUploadStatus.className = `notice ${type === 'error' ? 'warning' : 'verify-hint'}`;
+    };
+
+    const wireUpload = (side, inputId, btnId, previewId) => {
+      const input = document.getElementById(inputId);
+      const btn = document.getElementById(btnId);
+      const preview = document.getElementById(previewId);
+      if (!input || !btn) return;
+      btn.addEventListener('click', () => input.click());
+      input.addEventListener('change', async () => {
+        const file = input.files && input.files[0];
+        if (!file) return;
+        if (preview) {
+          preview.src = URL.createObjectURL(file);
+          preview.classList.remove('empty');
+        }
+        btn.disabled = true;
+        btn.textContent = 'Uploading...';
+        try {
+          const res = await uploadIdCard(side, file);
+          if (res.success) {
+            btn.textContent = side === 'front' ? 'Front Uploaded' : 'Back Uploaded';
+            btn.classList.add('done');
+            setIdStatus(res.message || `${side} uploaded.`, 'info');
+            if (res.redirect) {
+              await new Promise(r => setTimeout(r, 800));
+              window.location.href = res.redirect;
+            }
+          } else {
+            btn.disabled = false;
+            btn.textContent = side === 'front' ? 'Upload Front' : 'Upload Back';
+            setIdStatus(res.message || 'Upload failed.', 'error');
+            alert(res.message || 'Upload failed.');
+          }
+        } catch (e) {
+          btn.disabled = false;
+          btn.textContent = side === 'front' ? 'Upload Front' : 'Upload Back';
+          alert('Upload failed: ' + e.message);
+        }
+      });
+    };
+
+    wireUpload('front', 'cardFront', 'btnUploadFront', 'previewFront');
+    wireUpload('back', 'cardBack', 'btnUploadBack', 'previewBack');
   }
 
   if (currentPage === 'register' && faceRecognitionAvailable) {
@@ -398,7 +472,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  if (currentPage === 'index' && loggedIn && !(biometricVerified && cardUploaded)) {
+  if (currentPage === 'index' && loggedIn && !biometricVerified) {
     window.location.href = '/verify';
   }
 
