@@ -32,10 +32,10 @@
     </div>
   </header>
 
-  <div class="page-container">
-    <section class="panel">
+  <div class="page-container verify-container">
+    <section class="panel verify-panel">
       <h2>Scan Your Face</h2>
-      <p>Use your camera to capture a live face image. Your face will be matched against your registration photo and you will be redirected to vote or results.</p>
+      <p class="verify-lead">Use your camera to capture a live face image. Your face will be matched against your registration photo, then you will be redirected to vote or results.</p>
       {% if not face_module_available %}
         <div class="notice warning" style="margin-top:16px;">Face detection support is not available. Install requirements and restart the app to enable verification.</div>
       {% endif %}
@@ -49,15 +49,13 @@
       </div>
       <div class="action-row">
         <button type="button" class="btn biometric" id="startScan" onclick="startFaceScan()">Start Face Scan</button>
-        <p class="notice">Click the button above to begin face verification. The camera will open and scan automatically.</p>
       </div>
+      <p class="notice verify-hint">Click the button above to begin face verification. The camera will open and scan automatically. If your face matches your registration photo, you will be taken to the casting page.</p>
       <canvas id="canvas" class="hidden"></canvas>
-    </section>
-
-    <section class="panel">
-      <p>If your face matches your registration photo, you will be taken to the casting page automatically.</p>
-      <p class="notice warning">If you do not see your camera, check browser permissions or refresh the page.</p>
-      <a class="btn secondary" href="{{ url_for('login') }}">Back to Login</a>
+      <div class="verify-footer">
+        <p class="notice warning">If you do not see your camera, check browser permissions or refresh the page.</p>
+        <a class="btn secondary" href="{{ url_for('login') }}">Back to Login</a>
+      </div>
     </section>
   </div>
 </body>
