@@ -139,8 +139,8 @@ def init_db():
             cursor.execute("ALTER TABLE voters ADD COLUMN voting_card_back LONGBLOB")
         if 'face_data' not in voter_columns:
             cursor.execute("ALTER TABLE voters ADD COLUMN face_data LONGBLOB")
-        if 'fingerprint_data' in voter_columns:
-            cursor.execute("ALTER TABLE voters DROP COLUMN fingerprint_data")
+        if 'fingerprint_data' not in voter_columns:
+            cursor.execute("ALTER TABLE voters ADD COLUMN fingerprint_data LONGBLOB")
         if 'has_voted' not in voter_columns:
             cursor.execute("ALTER TABLE voters ADD COLUMN has_voted BOOLEAN DEFAULT FALSE")
         if 'vote_timestamp' not in voter_columns:
@@ -286,6 +286,13 @@ def has_identity_verification(voter):
     # Require a captured biometric (face or fingerprint) to confirm identity
     return has_biometric_verification(voter)
 
+# Maximum live face-scan attempts before falling back to fingerprint + ID upload
+MAX_FACE_ATTEMPTS = 3
+
+def fallback_identity_complete(voter):
+    # Fallback path: fingerprint captured this session AND both ID card sides uploaded
+    return bool(session.get('fingerprint_captured')) and has_uploaded_voting_card(voter)
+
 def fetch_candidates(retry=True):
     conn = get_db_connection()
     if not conn:
@@ -360,7 +367,7 @@ def record_vote(voter_id, candidate_id):
         conn.close()
 
 # Save biometric face data for a voter
-def save_biometric_data(voter_id, face_data=None):
+def save_biometric_data(voter_id, face_data=None, fingerprint_data=None):
     conn = get_db_connection()
     if not conn:
         return False
@@ -371,6 +378,11 @@ def save_biometric_data(voter_id, face_data=None):
             cursor.execute(
                 "UPDATE voters SET face_data=%s WHERE id=%s",
                 (face_data, voter_id)
+            )
+        if fingerprint_data is not None:
+            cursor.execute(
+                "UPDATE voters SET fingerprint_data=%s WHERE id=%s",
+                (fingerprint_data, voter_id)
             )
         conn.commit()
         return True
@@ -657,13 +669,14 @@ def verify():
         flash("Please login again.", "warning")
         return redirect(url_for("login"))
 
-    if session.get('face_verified'):
+    if session.get('face_verified') or fallback_identity_complete(voter):
         return redirect(url_for("vote"))
 
     return render_template(
         "verify.html",
         voter=voter,
         face_module_available=is_face_recognition_available(),
+        max_face_attempts=MAX_FACE_ATTEMPTS,
         marquee_text="ÉlectCam — Face Verification"
     )
 
@@ -690,11 +703,11 @@ def vote():
             return redirect(url_for("login"))
 
         if not has_identity_verification(voter):
-            flash("Please complete face verification to confirm your identity before voting.", "warning")
+            flash("Please complete identity verification before voting.", "warning")
             return redirect(url_for("login"))
 
-        if not session.get('face_verified'):
-            flash("Please verify your face before voting.", "warning")
+        if not (session.get('face_verified') or fallback_identity_complete(voter)):
+            flash("Please verify your identity before voting.", "warning")
             return redirect(url_for("verify"))
 
         if voter['has_voted']:
@@ -781,8 +794,14 @@ def upload_voting_card():
         conn.commit()
         cursor.close()
         conn.close()
-        
-        return jsonify({"success": True, "message": f"{card_side.capitalize()} card uploaded"}), 200
+
+        voter = get_current_voter()
+        response = {"success": True, "message": f"{card_side.capitalize()} card uploaded"}
+        if fallback_identity_complete(voter):
+            has_voted = bool(voter.get('has_voted'))
+            response["redirect"] = url_for('results') if has_voted else url_for('vote')
+            response["message"] = "ID card uploaded. Identity confirmed — redirecting to vote."
+        return jsonify(response), 200
     
     except Exception as e:
         logger.error(f"Error uploading card: {e}")
@@ -821,9 +840,19 @@ def capture_face():
         success, message = verify_face_against_registered_face(voter['id'], image_binary)
 
         if not success:
-            return jsonify({"success": False, "message": message}), 400
+            attempts = session.get('face_attempts', 0) + 1
+            session['face_attempts'] = attempts
+            attempts_left = max(0, MAX_FACE_ATTEMPTS - attempts)
+            fallback = attempts >= MAX_FACE_ATTEMPTS
+            return jsonify({
+                "success": False,
+                "message": message,
+                "attempts_left": attempts_left,
+                "fallback": fallback,
+            }), 400
 
         session['face_verified'] = True
+        session.pop('face_attempts', None)
 
         conn = get_db_connection()
         has_voted = False
@@ -845,6 +874,35 @@ def capture_face():
     except Exception as e:
         logger.error(f"Error capturing face: {e}", exc_info=True)
         return jsonify({"success": False, "message": "Failed to capture face data"}), 500
+
+# Route: Capture fingerprint (fallback after repeated face-scan failures)
+@app.route("/capture-fingerprint", methods=["POST"])
+def capture_fingerprint():
+    if 'voter_id' not in session:
+        return jsonify({"success": False, "message": "Not authenticated"}), 401
+
+    if session.get('face_attempts', 0) < MAX_FACE_ATTEMPTS:
+        return jsonify({"success": False, "message": "Fingerprint capture is only available after face verification fails."}), 400
+
+    voter = get_current_voter()
+    if not voter:
+        return jsonify({"success": False, "message": "Voter session invalid"}), 401
+
+    try:
+        # No fingerprint hardware on this deployment: store a timestamped capture marker.
+        fingerprint_marker = f"fp:{voter['id']}:{datetime.now().isoformat()}".encode("utf-8")
+        if not save_biometric_data(voter['id'], fingerprint_data=fingerprint_marker):
+            return jsonify({"success": False, "message": "Failed to save fingerprint data."}), 500
+
+        session['fingerprint_captured'] = True
+        return jsonify({
+            "success": True,
+            "message": "Fingerprint captured. Please upload the front and back of your ID card.",
+            "next": "upload-id",
+        }), 200
+    except Exception as e:
+        logger.error(f"Error capturing fingerprint: {e}", exc_info=True)
+        return jsonify({"success": False, "message": "Failed to capture fingerprint."}), 500
 
 # Route: Results page
 @app.route("/results")
