@@ -1,22 +1,3 @@
-// File previews for ID card uploads
-function previewFile(inputEl, imgElId) {
-  const file = inputEl.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = e => document.getElementById(imgElId).src = e.target.result;
-  reader.readAsDataURL(file);
-}
-
-// Upload file to server (voter must be logged-in session-wise)
-async function uploadCard(side, file) {
-  if (!file) return;
-  const fd = new FormData();
-  fd.append('file', file);
-  fd.append('side', side);
-  const res = await fetch('/upload-voting-card', { method: 'POST', body: fd });
-  return res.json();
-}
-
 // Camera handling
 let stream = null;
 async function waitForVideoReady(video) {
@@ -181,51 +162,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     return true;
   };
 
-  const cardFrontInput = document.getElementById('cardFront');
-  const cardBackInput = document.getElementById('cardBack');
-  const btnUploadFront = document.getElementById('btnUploadFront');
-  const btnUploadBack = document.getElementById('btnUploadBack');
   const faceRecognitionAvailable = document.body.dataset.faceRecognition === 'true';
 
   const biometricVerified = document.body.dataset.biometrics === 'true';
-  const cardUploaded = document.body.dataset.cardsUploaded === 'true';
-
-  if (cardFrontInput) {
-    cardFrontInput.addEventListener('change', async e => {
-      previewFile(e.target, 'previewFront');
-      if (!loggedIn) return;
-      const res = await uploadCard('front', e.target.files[0]);
-      alert(res.message || JSON.stringify(res));
-      if (res && res.success) {
-        // Prompt for back upload immediately
-        if (cardBackInput) cardBackInput.click();
-      }
-    });
-  }
-  if (cardBackInput) {
-    cardBackInput.addEventListener('change', async e => {
-      previewFile(e.target, 'previewBack');
-      if (!loggedIn) return;
-      const res = await uploadCard('back', e.target.files[0]);
-      alert(res.message || JSON.stringify(res));
-      if (res && res.success) {
-        // Refresh to update server-side status and enable voting
-        window.location.reload();
-      }
-    });
-  }
-
-  if (btnUploadFront) {
-    btnUploadFront.addEventListener('click', () => {
-      if (cardFrontInput) cardFrontInput.click();
-    });
-  }
-  if (btnUploadBack) {
-    btnUploadBack.addEventListener('click', () => {
-      if (cardBackInput) cardBackInput.click();
-    });
-  }
-  // main combined upload button removed; individual front/back buttons are used
 
   const startScanBtn = document.getElementById('startScan');
   if (startScanBtn) {
@@ -245,9 +184,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         e.preventDefault();
         return;
       }
-      if (!(biometricVerified && cardUploaded)) {
+      if (!biometricVerified) {
         e.preventDefault();
-        alert('You must upload both ID card sides and complete biometric capture before voting.');
+        alert('You must complete face verification before voting.');
         return;
       }
     });
@@ -398,7 +337,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  if (currentPage === 'index' && loggedIn && !(biometricVerified && cardUploaded)) {
+  if (currentPage === 'index' && loggedIn && !biometricVerified) {
     window.location.href = '/verify';
   }
 

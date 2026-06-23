@@ -283,8 +283,8 @@ def has_uploaded_voting_card(voter):
     return bool(voter and voter.get('voting_card_front') and voter.get('voting_card_back'))
 
 def has_identity_verification(voter):
-    # Require both a captured biometric (face or fingerprint) and uploaded ID front+back
-    return has_biometric_verification(voter) and has_uploaded_voting_card(voter)
+    # Require a captured biometric (face or fingerprint) to confirm identity
+    return has_biometric_verification(voter)
 
 def fetch_candidates(retry=True):
     conn = get_db_connection()
@@ -690,7 +690,7 @@ def vote():
             return redirect(url_for("login"))
 
         if not has_identity_verification(voter):
-            flash("Please upload both sides of your ID card and complete biometric verification to confirm your identity before voting.", "warning")
+            flash("Please complete face verification to confirm your identity before voting.", "warning")
             return redirect(url_for("login"))
 
         if not session.get('face_verified'):
@@ -815,20 +815,13 @@ def capture_face():
         if not voter:
             return jsonify({"success": False, "message": "Voter session invalid"}), 401
 
-        if voter.get('face_data'):
-            success, message = verify_face_against_registered_face(voter['id'], image_binary)
-        elif voter.get('voting_card_front'):
-            success, message = verify_face_against_voting_card(voter['id'], image_binary)
-        else:
-            return jsonify({"success": False, "message": "No reference face template or voting card available for verification."}), 400
+        if not voter.get('face_data'):
+            return jsonify({"success": False, "message": "No registration face on file. Please register before verifying."}), 400
+
+        success, message = verify_face_against_registered_face(voter['id'], image_binary)
 
         if not success:
             return jsonify({"success": False, "message": message}), 400
-
-        if not voter.get('face_data'):
-            if not save_biometric_data(voter['id'], face_data=image_binary):
-                logger.error("Unable to save biometric face data for voter_id=%s", voter['id'])
-                return jsonify({"success": False, "message": "Failed to save face data"}), 500
 
         session['face_verified'] = True
 

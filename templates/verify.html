@@ -34,26 +34,11 @@
 
   <div class="page-container">
     <section class="panel">
-      <h2>Step 1: Upload Your Voting Card</h2>
-      <p>You must upload the front of your voting card before your face can be verified.</p>
-      <div class="preview-grid">
-        <img id="previewFront" class="preview" src="" alt="Front preview" />
-        <img id="previewBack" class="preview" src="" alt="Back preview" />
-      </div>
-      <div class="card-tools">
-        <button type="button" class="btn upload" id="btnUploadFront">Upload Voting Card Front</button>
-        <button type="button" class="btn upload" id="btnUploadBack">Upload Voting Card Back</button>
-        <input type="file" id="cardFront" accept="image/*" class="hidden">
-        <input type="file" id="cardBack" accept="image/*" class="hidden">
-      </div>
+      <h2>Scan Your Face</h2>
+      <p>Use your camera to capture a live face image. Your face will be matched against your registration photo and you will be redirected to vote or results.</p>
       {% if not face_module_available %}
         <div class="notice warning" style="margin-top:16px;">Face detection support is not available. Install requirements and restart the app to enable verification.</div>
       {% endif %}
-    </section>
-
-    <section class="panel">
-      <h2>Step 2: Scan Your Face</h2>
-      <p>Use your camera to capture a live face image. Your face will be saved and you will be redirected to vote or results.</p>
       <div class="camera-preview">
         <video id="camera" class="hidden" autoplay muted playsinline></video>
         <div class="circle-overlay hidden" id="faceOverlay"></div>
@@ -70,7 +55,7 @@
     </section>
 
     <section class="panel">
-      <p>If your face matches the voting card photo, you will be taken to the casting page automatically.</p>
+      <p>If your face matches your registration photo, you will be taken to the casting page automatically.</p>
       <p class="notice warning">If you do not see your camera, check browser permissions or refresh the page.</p>
       <a class="btn secondary" href="{{ url_for('login') }}">Back to Login</a>
     </section>
